@@ -4,8 +4,8 @@
 #define bool int
 #define MS_IN_US 1000
 
-static ULONG GMBusI2CDebugLevel = 100;
-static ULONG GMBusI2CDebugCatagories = DBG_INIT || DBG_PNP || DBG_IOCTL;
+static ULONG Rk3xI2CDebugLevel = 100;
+static ULONG Rk3xI2CDebugCatagories = DBG_INIT || DBG_PNP || DBG_IOCTL;
 
 UINT32 read32(PGMBUSI2C_CONTEXT pDevice, UINT32 reg)
 {
@@ -26,10 +26,10 @@ __in PUNICODE_STRING RegistryPath
 	WDF_DRIVER_CONFIG      config;
 	WDF_OBJECT_ATTRIBUTES  attributes;
 
-	GMBusI2CPrint(DEBUG_LEVEL_INFO, DBG_INIT,
+	Rk3xI2CPrint(DEBUG_LEVEL_INFO, DBG_INIT,
 		"Driver Entry\n");
 
-	WDF_DRIVER_CONFIG_INIT(&config, GMBusI2CEvtDeviceAdd);
+	WDF_DRIVER_CONFIG_INIT(&config, Rk3xI2CEvtDeviceAdd);
 
 	WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
 
@@ -46,7 +46,7 @@ __in PUNICODE_STRING RegistryPath
 
 	if (!NT_SUCCESS(status))
 	{
-		GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_INIT,
+		Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_INIT,
 			"WdfDriverCreate failed with status 0x%x\n", status);
 	}
 
@@ -113,7 +113,7 @@ static NTSTATUS GetBusInformation(
 		NULL
 	);
 	if (!NT_SUCCESS(status)) {
-		GMBusI2CPrint(
+		Rk3xI2CPrint(
 			DEBUG_LEVEL_ERROR,
 			DBG_IOCTL,
 			"Error getting device data - 0x%x\n",
@@ -156,7 +156,7 @@ NTSTATUS ConnectToArbitrator(
 	);
 	if (!NT_SUCCESS(status))
 	{
-		GMBusI2CPrint(
+		Rk3xI2CPrint(
 			DEBUG_LEVEL_ERROR,
 			DBG_IOCTL,
 			"Error creating IoTarget object - 0x%x\n",
@@ -178,13 +178,13 @@ NTSTATUS ConnectToArbitrator(
 	openParams.CreateDisposition = FILE_OPEN;
 	openParams.FileAttributes = FILE_ATTRIBUTE_NORMAL;
 
-	GMBUSI2C_INTERFACE_STANDARD GMBusI2CInterface;
-	RtlZeroMemory(&GMBusI2CInterface, sizeof(GMBusI2CInterface));
+	GMBUSI2C_INTERFACE_STANDARD Rk3xI2CInterface;
+	RtlZeroMemory(&Rk3xI2CInterface, sizeof(Rk3xI2CInterface));
 
 	status = WdfIoTargetOpen(pDevice->busIoTarget, &openParams);
 	if (!NT_SUCCESS(status))
 	{
-		GMBusI2CPrint(
+		Rk3xI2CPrint(
 			DEBUG_LEVEL_ERROR,
 			DBG_IOCTL,
 			"Error opening IoTarget object - 0x%x\n",
@@ -195,25 +195,25 @@ NTSTATUS ConnectToArbitrator(
 
 	status = WdfIoTargetQueryForInterface(pDevice->busIoTarget,
 		&GUID_GMBUSI2C_INTERFACE_STANDARD,
-		(PINTERFACE)&GMBusI2CInterface,
-		sizeof(GMBusI2CInterface),
+		(PINTERFACE)&Rk3xI2CInterface,
+		sizeof(Rk3xI2CInterface),
 		1,
 		NULL);
 	WdfIoTargetClose(pDevice->busIoTarget);
 	pDevice->busIoTarget = NULL;
 	if (!NT_SUCCESS(status)) {
-		GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
+		Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
 			"WdfFdoQueryForInterface failed 0x%x\n", status);
 		return status;
 	}
 
-	pDevice->GMBusI2CBusContext = GMBusI2CInterface.InterfaceHeader.Context;
-	pDevice->GMBusI2CLockBus = GMBusI2CInterface.LockBus;
-	pDevice->GMBusI2CUnlockBus = GMBusI2CInterface.UnlockBus;
+	pDevice->Rk3xI2CBusContext = Rk3xI2CInterface.InterfaceHeader.Context;
+	pDevice->Rk3xI2CLockBus = Rk3xI2CInterface.LockBus;
+	pDevice->Rk3xI2CUnlockBus = Rk3xI2CInterface.UnlockBus;
 
-	GMBusI2CInterface.GetResources(pDevice->GMBusI2CBusContext, &pDevice->MMIOAddress);
+	Rk3xI2CInterface.GetResources(pDevice->Rk3xI2CBusContext, &pDevice->MMIOAddress);
 
-	GMBusI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
+	Rk3xI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
 		"MMIO acquired: %p\n", pDevice->MMIOAddress);
 
 	return status;
@@ -293,7 +293,7 @@ GetMMIOBar(
 	mmioPhys.QuadPart = mmioBAR;
 
 	pDevice->MMIOAddress = MmMapIoSpace(mmioPhys, GMBUSMMIO_SPACE, MmWriteCombined);
-	GMBusI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
+	Rk3xI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
 		"MMIO Mapped to %p\n", pDevice->MMIOAddress);
 
 Exit:
@@ -347,7 +347,7 @@ Status
 			return status;
 		}
 
-		GMBusI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
+		Rk3xI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
 			"Bus Number: %d\n", pDevice->busNumber);
 	}
 	else {
@@ -469,7 +469,7 @@ NTSTATUS OnTargetConnect(
 	PRH_QUERY_CONNECTION_PROPERTIES_OUTPUT_BUFFER  connection = (PRH_QUERY_CONNECTION_PROPERTIES_OUTPUT_BUFFER)params.ConnectionParameters;
 
 	if (connection->PropertiesLength < sizeof(PNP_SERIAL_BUS_DESCRIPTOR)) {
-		GMBusI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
+		Rk3xI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
 			"Invalid connection properties (length = %lu, "
 			"expected = %Iu)\n",
 			connection->PropertiesLength,
@@ -479,7 +479,7 @@ NTSTATUS OnTargetConnect(
 
 	PPNP_SERIAL_BUS_DESCRIPTOR descriptor = (PPNP_SERIAL_BUS_DESCRIPTOR)connection->ConnectionProperties;
 	if (descriptor->SerialBusType != I2C_SERIAL_BUS_TYPE) {
-		GMBusI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
+		Rk3xI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
 			"Bus type %c not supported, only I2C\n",
 			descriptor->SerialBusType);
 		return STATUS_INVALID_PARAMETER;
@@ -626,7 +626,7 @@ Exit:
 	return status;
 }
 
-NTSTATUS GMBusI2CArbGetResources(
+NTSTATUS Rk3xI2CArbGetResources(
 	PGMBUSI2C_CONTEXT pDevice,
 	PVOID* MMIOAddr
 ) {
@@ -639,7 +639,7 @@ NTSTATUS GMBusI2CArbGetResources(
 	*MMIOAddr = pDevice->MMIOAddress;
 }
 
-NTSTATUS GMBusI2CArbLock(
+NTSTATUS Rk3xI2CArbLock(
 	PGMBUSI2C_CONTEXT pDevice
 ) {
 	if (!pDevice || !pDevice->IsArbitrator) {
@@ -648,7 +648,7 @@ NTSTATUS GMBusI2CArbLock(
 	return WdfWaitLockAcquire(pDevice->GMBusLock, NULL);
 }
 
-NTSTATUS GMBusI2CArbUnlock(
+NTSTATUS Rk3xI2CArbUnlock(
 	PGMBUSI2C_CONTEXT pDevice
 ) {
 	if (!pDevice || !pDevice->IsArbitrator) {
@@ -659,7 +659,7 @@ NTSTATUS GMBusI2CArbUnlock(
 }
 
 NTSTATUS
-GMBusI2CEvtDeviceAdd(
+Rk3xI2CEvtDeviceAdd(
 IN WDFDRIVER       Driver,
 IN PWDFDEVICE_INIT DeviceInit
 )
@@ -673,12 +673,12 @@ IN PWDFDEVICE_INIT DeviceInit
 
 	PAGED_CODE();
 
-	GMBusI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
-		"GMBusI2CEvtDeviceAdd called\n");
+	Rk3xI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
+		"Rk3xI2CEvtDeviceAdd called\n");
 
 	status = SpbDeviceInitConfig(DeviceInit);
 	if (!NT_SUCCESS(status)) {
-		GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
+		Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
 			"SpbDeviceInitConfig failed with status code 0x%x\n", status);
 		return status;
 	}
@@ -711,7 +711,7 @@ IN PWDFDEVICE_INIT DeviceInit
 
 	if (!NT_SUCCESS(status))
 	{
-		GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
+		Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
 			"WdfDeviceCreate failed with status code 0x%x\n", status);
 
 		return status;
@@ -733,13 +733,13 @@ IN PWDFDEVICE_INIT DeviceInit
 
 	if (!NT_SUCCESS(status))
 	{
-		GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
+		Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
 			"Failed to get HID with status code 0x%x\n", status);
 
 		return status;
 	}
 
-	GMBusI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
+	Rk3xI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
 		"Arbitrator? %d\n", devContext->IsArbitrator);
 
 	if (devContext->IsArbitrator) { //Arbitrator. Setup protocol
@@ -749,7 +749,7 @@ IN PWDFDEVICE_INIT DeviceInit
 			&dosDeviceName
 		);
 		if (!NT_SUCCESS(status)) {
-			GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
+			Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
 				"WdfDeviceCreateSymbolicLink failed 0x%x\n", status);
 			return status;
 		}
@@ -758,7 +758,7 @@ IN PWDFDEVICE_INIT DeviceInit
 		attributes.ParentObject = device;
 		status = WdfWaitLockCreate(&attributes, &devContext->GMBusLock);
 		if (!NT_SUCCESS(status)) {
-			GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
+			Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
 				"WdfWaitLockCreate failed 0x%x\n", status);
 			return status;
 		}
@@ -778,9 +778,9 @@ IN PWDFDEVICE_INIT DeviceInit
 		GMBusInterface.InterfaceHeader.InterfaceReference = WdfDeviceInterfaceReferenceNoOp;
 		GMBusInterface.InterfaceHeader.InterfaceDereference = WdfDeviceInterfaceDereferenceNoOp;
 
-		GMBusInterface.GetResources = GMBusI2CArbGetResources;
-		GMBusInterface.LockBus = GMBusI2CArbLock;
-		GMBusInterface.UnlockBus = GMBusI2CArbUnlock;
+		GMBusInterface.GetResources = Rk3xI2CArbGetResources;
+		GMBusInterface.LockBus = Rk3xI2CArbLock;
+		GMBusInterface.UnlockBus = Rk3xI2CArbUnlock;
 
 		WDF_QUERY_INTERFACE_CONFIG_INIT(&qiConfig,
 			(PINTERFACE)&GMBusInterface,
@@ -789,7 +789,7 @@ IN PWDFDEVICE_INIT DeviceInit
 
 		status = WdfDeviceAddQueryInterface(device, &qiConfig);
 		if (!NT_SUCCESS(status)) {
-			GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
+			Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
 				"WdfDeviceAddQueryInterface failed 0x%x\n", status);
 
 			return status;
@@ -811,7 +811,7 @@ IN PWDFDEVICE_INIT DeviceInit
 		status = SpbDeviceInitialize(devContext->FxDevice, &spbConfig);
 		if (!NT_SUCCESS(status))
 		{
-			GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
+			Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
 				"SpbDeviceInitialize failed with status code 0x%x\n", status);
 
 			return status;

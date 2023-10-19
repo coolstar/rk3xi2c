@@ -1,7 +1,7 @@
 #include "driver.h"
 
-static ULONG GMBusI2CDebugLevel = 100;
-static ULONG GMBusI2CDebugCatagories = DBG_INIT || DBG_PNP || DBG_IOCTL;
+static ULONG Rk3xI2CDebugLevel = 100;
+static ULONG Rk3xI2CDebugCatagories = DBG_INIT || DBG_PNP || DBG_IOCTL;
 
 NTSTATUS gmbus_wait_idle(PGMBUSI2C_CONTEXT pDevice) {
 	UINT32 irq_enable = GMBUS_IDLE_EN;
@@ -19,7 +19,7 @@ NTSTATUS gmbus_wait_idle(PGMBUSI2C_CONTEXT pDevice) {
 		KeQuerySystemTimePrecise(&CurrentTime);
 
 		if (((CurrentTime.QuadPart - StartTime.QuadPart) / (10 * 1000)) >= 10) { //wait for up to 10 milliseconds
-			GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_IOCTL,
+			Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_IOCTL,
 				"gmbus_wait_idle timed out\n");
 			return STATUS_IO_TIMEOUT;
 		}
@@ -49,7 +49,7 @@ NTSTATUS gmbus_wait(PGMBUSI2C_CONTEXT pDevice, UINT32 status, UINT32 irq_en)
 		KeQuerySystemTimePrecise(&CurrentTime);
 
 		if (((CurrentTime.QuadPart - StartTime.QuadPart) / (10 * 1000)) >= 50) { //wait for up to 50 milliseconds
-			GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_IOCTL,
+			Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_IOCTL,
 				"gmbus_wait timed out\n");
 			return STATUS_IO_TIMEOUT;
 		}
@@ -152,7 +152,7 @@ NTSTATUS i2c_xfer_single(
 	UINT32 reg0 = pDevice->busNumber | GMBUS_RATE_100KHZ;
 
 	if (gmbus_wait_idle(pDevice)) { //Wait for idle in case IGD is using it
-		GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_IOCTL,
+		Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_IOCTL,
 			"gmbus timed out waiting for idle\n");
 		status = STATUS_IO_TIMEOUT;
 	}
@@ -166,7 +166,7 @@ NTSTATUS i2c_xfer_single(
 			descriptor.TransferLength,
 			0);
 		if (!NT_SUCCESS(status)) {
-			GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_IOCTL,
+			Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_IOCTL,
 				"gmbus_xfer_read_chunk returned %x\n", status);
 			goto clear_err;
 		}
@@ -178,7 +178,7 @@ NTSTATUS i2c_xfer_single(
 			descriptor.TransferLength,
 			0);
 		if (!NT_SUCCESS(status)) {
-			GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_IOCTL,
+			Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_IOCTL,
 				"gmbus_xfer_write_chunk returned %x\n", status);
 			goto clear_err;
 		}
@@ -192,7 +192,7 @@ NTSTATUS i2c_xfer_single(
 	write32(pDevice, GMBUS1, GMBUS_CYCLE_STOP | GMBUS_SW_RDY);
 
 	if (gmbus_wait_idle(pDevice)) {
-		GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_IOCTL,
+		Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_IOCTL,
 			"gmbus timed out waiting for idle\n");
 		status = STATUS_IO_TIMEOUT;
 	}
@@ -203,7 +203,7 @@ clear_err:
 	//Wait for bus to idle before clearing
 
 	if (gmbus_wait_idle(pDevice)) {
-		GMBusI2CPrint(DEBUG_LEVEL_ERROR, DBG_IOCTL,
+		Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_IOCTL,
 			"gmbus timed out waiting for idle\n");
 		status = STATUS_IO_TIMEOUT;
 	}
@@ -224,7 +224,7 @@ NTSTATUS i2c_xfer(PGMBUSI2C_CONTEXT pDevice,
 	NTSTATUS status = STATUS_SUCCESS;
 	PPBC_TARGET pTarget = GetTargetContext(SpbTarget);
 	
-	status = (pDevice->GMBusI2CLockBus)(pDevice->GMBusI2CBusContext);
+	status = (pDevice->Rk3xI2CLockBus)(pDevice->Rk3xI2CBusContext);
 	if (!NT_SUCCESS(status)) {
 		return status;
 	}
@@ -243,7 +243,7 @@ NTSTATUS i2c_xfer(PGMBUSI2C_CONTEXT pDevice,
 
 		status = i2c_xfer_single(pDevice, pTarget, descriptor, mdlChain);
 		if (!NT_SUCCESS(status)) {
-			(pDevice->GMBusI2CUnlockBus)(pDevice->GMBusI2CBusContext);
+			(pDevice->Rk3xI2CUnlockBus)(pDevice->Rk3xI2CBusContext);
 			return status;
 		}
 
@@ -251,7 +251,7 @@ NTSTATUS i2c_xfer(PGMBUSI2C_CONTEXT pDevice,
 		WdfRequestSetInformation(SpbRequest, transferredLength);
 	}
 
-	(pDevice->GMBusI2CUnlockBus)(pDevice->GMBusI2CBusContext);
+	(pDevice->Rk3xI2CUnlockBus)(pDevice->Rk3xI2CBusContext);
 
 	return status;
 }

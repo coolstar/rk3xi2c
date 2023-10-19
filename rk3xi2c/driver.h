@@ -28,13 +28,13 @@ typedef struct _PNP_I2C_SERIAL_BUS_DESCRIPTOR {
 
 #include <poppack.h>
 
-#include "gmbusi2c.h"
+#include "rk3xi2c.h"
 
 //
 // String definitions
 //
 
-#define DRIVERNAME                 "gmbusi2c.sys: "
+#define DRIVERNAME                 "rk3xi2c.sys: "
 
 #define GMBUSI2C_POOL_TAG            (ULONG) 'GMIC'
 #define GMBUSI2C_HARDWARE_IDS        L"CoolStar\\GMBUSI2C\0\0"
@@ -95,13 +95,13 @@ typedef struct _GMBUSI2CI2C_CONTEXT
 
     //Links only past this
 
-    PVOID GMBusI2CBusContext;
+    PVOID Rk3xI2CBusContext;
 
     WDFIOTARGET busIoTarget;
 
-    PGMBUSI2C_BUS_LOCK GMBusI2CLockBus;
+    PGMBUSI2C_BUS_LOCK Rk3xI2CLockBus;
 
-    PGMBUSI2C_BUS_UNLOCK GMBusI2CUnlockBus;
+    PGMBUSI2C_BUS_UNLOCK Rk3xI2CUnlockBus;
 
     UINT8 busNumber;
 
@@ -115,11 +115,11 @@ WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(GMBUSI2C_CONTEXT, GetDeviceContext)
 
 DRIVER_INITIALIZE DriverEntry;
 
-EVT_WDF_DRIVER_UNLOAD GMBusI2CDriverUnload;
+EVT_WDF_DRIVER_UNLOAD Rk3xI2CDriverUnload;
 
-EVT_WDF_DRIVER_DEVICE_ADD GMBusI2CEvtDeviceAdd;
+EVT_WDF_DRIVER_DEVICE_ADD Rk3xI2CEvtDeviceAdd;
 
-EVT_WDF_IO_QUEUE_IO_INTERNAL_DEVICE_CONTROL GMBusI2CEvtInternalDeviceControl;
+EVT_WDF_IO_QUEUE_IO_INTERNAL_DEVICE_CONTROL Rk3xI2CEvtInternalDeviceControl;
 
 UINT32 read32(PGMBUSI2C_CONTEXT pDevice, UINT32 reg);
 void write32(PGMBUSI2C_CONTEXT pDevice, UINT32 reg, UINT32 val);
@@ -142,16 +142,16 @@ NTSTATUS i2c_xfer(PGMBUSI2C_CONTEXT pDevice,
 #define DBG_IOCTL 4
 
 #if 0
-#define GMBusI2CPrint(dbglevel, dbgcatagory, fmt, ...) {          \
-    if (GMBusI2CDebugLevel >= dbglevel &&                         \
-        (GMBusI2CDebugCatagories && dbgcatagory))                 \
+#define Rk3xI2CPrint(dbglevel, dbgcatagory, fmt, ...) {          \
+    if (Rk3xI2CDebugLevel >= dbglevel &&                         \
+        (Rk3xI2CDebugCatagories && dbgcatagory))                 \
 		    {                                                           \
         DbgPrint(DRIVERNAME);                                   \
         DbgPrint(fmt, __VA_ARGS__);                             \
 		    }                                                           \
 }
 #else
-#define GMBusI2CPrint(dbglevel, fmt, ...) {                       \
+#define Rk3xI2CPrint(dbglevel, fmt, ...) {                       \
 }
 #endif
 #endif
