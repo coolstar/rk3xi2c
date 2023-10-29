@@ -1,5 +1,5 @@
-#if !defined(_GMBUSI2CI2C_H_)
-#define _GMBUSI2CI2C_H_
+#if !defined(_RK3XI2C_H_)
+#define _RK3XI2C_H_
 
 #pragma warning(disable:4200)  // suppress nameless struct/union warning
 #pragma warning(disable:4201)  // suppress nameless struct/union warning
@@ -36,48 +36,46 @@ typedef struct _PNP_I2C_SERIAL_BUS_DESCRIPTOR {
 
 #define DRIVERNAME                 "rk3xi2c.sys: "
 
-#define GMBUSI2C_POOL_TAG            (ULONG) 'GMIC'
-#define GMBUSI2C_HARDWARE_IDS        L"CoolStar\\GMBUSI2C\0\0"
-#define GMBUSI2C_HARDWARE_IDS_LENGTH sizeof(GMBUSI2CI2C_HARDWARE_IDS)
-
-#define GMBUSMMIO_SPACE 2 * 1024 * 1024
+#define RK3XI2C_POOL_TAG            (ULONG) 'CIKR'
+#define RK3XI2C_HARDWARE_IDS        L"CoolStar\\RK3XI2C\0\0"
+#define RK3XI2C_HARDWARE_IDS_LENGTH sizeof(RK3XI2C_HARDWARE_IDS)
 
 #define true 1
 #define false 0
 
-typedef
-NTSTATUS
-(*PGMBUSI2C_BUS_LOCK)(
-    IN      PVOID Context
-    );
+/* I2C Frequency Modes */
+#define I2C_MAX_STANDARD_MODE_FREQ	100000
+#define I2C_MAX_FAST_MODE_FREQ		400000
+#define I2C_MAX_FAST_MODE_PLUS_FREQ	1000000
+#define I2C_MAX_TURBO_MODE_FREQ		1400000
+#define I2C_MAX_HIGH_SPEED_MODE_FREQ	3400000
+#define I2C_MAX_ULTRA_FAST_MODE_FREQ	5000000
 
-typedef
-NTSTATUS
-(*PGMBUSI2C_BUS_UNLOCK)(
-    IN      PVOID Context
-    );
+/**
+ * struct i2c_timings - I2C timing information
+ * @bus_freq_hz: the bus frequency in Hz
+ * @scl_rise_ns: time SCL signal takes to rise in ns; t(r) in the I2C specification
+ * @scl_fall_ns: time SCL signal takes to fall in ns; t(f) in the I2C specification
+ * @scl_int_delay_ns: time IP core additionally needs to setup SCL in ns
+ * @sda_fall_ns: time SDA signal takes to fall in ns; t(f) in the I2C specification
+ * @sda_hold_ns: time IP core additionally needs to hold SDA in ns
+ * @digital_filter_width_ns: width in ns of spikes on i2c lines that the IP core
+ *	digital filter can filter out
+ * @analog_filter_cutoff_freq_hz: threshold frequency for the low pass IP core
+ *	analog filter
+ */
+struct i2c_timings {
+    UINT32 bus_freq_hz;
+    UINT32 scl_rise_ns;
+    UINT32 scl_fall_ns;
+    UINT32 scl_int_delay_ns;
+    UINT32 sda_fall_ns;
+    UINT32 sda_hold_ns;
+    UINT32 digital_filter_width_ns;
+    UINT32 analog_filter_cutoff_freq_hz;
+};
 
-typedef
-NTSTATUS
-(*PGMBUSI2C_BAR0_ADDR)(
-    IN      PVOID Context,
-    OUT     PVOID *MMIOAddr
-    );
-
-DEFINE_GUID(GUID_GMBUSI2C_INTERFACE_STANDARD,
-    0xf23b6099, 0xb638, 0x4fa9, 0x82, 0xca, 0x26, 0xe2, 0xf4, 0xeb, 0x76, 0x49);
-
-//
-// Interface for getting and setting power level etc.,
-//
-typedef struct _GMBUSI2C_INTERFACE_STANDARD {
-    INTERFACE                        InterfaceHeader;
-    PGMBUSI2C_BAR0_ADDR              GetResources;
-    PGMBUSI2C_BUS_LOCK               LockBus;
-    PGMBUSI2C_BUS_UNLOCK             UnlockBus;
-} GMBUSI2C_INTERFACE_STANDARD, * PGMBUSI2C_INTERFACE_STANDARD;
-
-typedef struct _GMBUSI2CI2C_CONTEXT
+typedef struct _RK3XI2C_CONTEXT
 {
 	//
 	// Handle back to the WDFDEVICE
@@ -85,29 +83,40 @@ typedef struct _GMBUSI2CI2C_CONTEXT
 
 	WDFDEVICE FxDevice;
 
-    BOOLEAN IsArbitrator;
-
     PVOID MMIOAddress;
+    SIZE_T MMIOSize;
 
-    //Arbitrator Only
-
-    WDFWAITLOCK GMBusLock;
-
-    //Links only past this
-
+    //I2C Link
+    UINT32 baseClock;
     PVOID Rk3xI2CBusContext;
-
     WDFIOTARGET busIoTarget;
-
-    PGMBUSI2C_BUS_LOCK Rk3xI2CLockBus;
-
-    PGMBUSI2C_BUS_UNLOCK Rk3xI2CUnlockBus;
-
     UINT8 busNumber;
 
-} GMBUSI2C_CONTEXT, *PGMBUSI2C_CONTEXT;
+    WDFINTERRUPT Interrupt;
 
-WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(GMBUSI2C_CONTEXT, GetDeviceContext)
+    //Synchronization
+    WDFWAITLOCK waitLock;
+    KEVENT waitEvent;
+    BOOLEAN isBusy;
+
+    //Current Message
+    PMDL currentMDLChain;
+    SPB_TRANSFER_DESCRIPTOR currentDescriptor;
+    UINT8 I2CAddress;
+    unsigned int mode;
+    BOOLEAN isLastMsg;
+
+    //State Machine
+    enum rk3x_i2c_state state;
+    UINT32 processed;
+    NTSTATUS transactionStatus;
+
+    //SOC Data
+    struct i2c_timings timings;
+    NTSTATUS (*calcTimings)(unsigned long, struct i2c_timings*, struct rk3x_i2c_calced_timings*);
+} RK3XI2C_CONTEXT, *PRK3XI2C_CONTEXT;
+
+WDF_DECLARE_CONTEXT_TYPE_WITH_NAME(RK3XI2C_CONTEXT, GetDeviceContext)
 
 //
 // Function definitions
@@ -121,13 +130,19 @@ EVT_WDF_DRIVER_DEVICE_ADD Rk3xI2CEvtDeviceAdd;
 
 EVT_WDF_IO_QUEUE_IO_INTERNAL_DEVICE_CONTROL Rk3xI2CEvtInternalDeviceControl;
 
-UINT32 read32(PGMBUSI2C_CONTEXT pDevice, UINT32 reg);
-void write32(PGMBUSI2C_CONTEXT pDevice, UINT32 reg, UINT32 val);
+UINT32 read32(PRK3XI2C_CONTEXT pDevice, UINT32 reg);
+void write32(PRK3XI2C_CONTEXT pDevice, UINT32 reg, UINT32 val);
 
-NTSTATUS i2c_xfer(PGMBUSI2C_CONTEXT pDevice,
+BOOLEAN rk3x_i2c_irq(WDFINTERRUPT Interrupt, ULONG MessageID);
+NTSTATUS i2c_xfer(PRK3XI2C_CONTEXT pDevice,
     _In_ SPBTARGET SpbTarget,
     _In_ SPBREQUEST SpbRequest,
     _In_ ULONG TransferCount);
+NTSTATUS rk3x_i2c_v1_calc_timings(unsigned long clk_rate,
+    struct i2c_timings* t,
+    struct rk3x_i2c_calced_timings* t_calc);
+void rk3x_i2c_adapt_div(PRK3XI2C_CONTEXT pDevice, unsigned long clk_rate);
+void updateClockSettings(PRK3XI2C_CONTEXT pDevice);
 
 //
 // Helper macros

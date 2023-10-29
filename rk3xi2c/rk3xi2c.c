@@ -7,12 +7,12 @@
 static ULONG Rk3xI2CDebugLevel = 100;
 static ULONG Rk3xI2CDebugCatagories = DBG_INIT || DBG_PNP || DBG_IOCTL;
 
-UINT32 read32(PGMBUSI2C_CONTEXT pDevice, UINT32 reg)
+UINT32 read32(PRK3XI2C_CONTEXT pDevice, UINT32 reg)
 {
 	return *(UINT32 *)((CHAR *)pDevice->MMIOAddress + reg);
 }
 
-void write32(PGMBUSI2C_CONTEXT pDevice, UINT32 reg, UINT32 val) {
+void write32(PRK3XI2C_CONTEXT pDevice, UINT32 reg, UINT32 val) {
 	*(UINT32 *)((CHAR *)pDevice->MMIOAddress + reg) = val;
 }
 
@@ -53,17 +53,18 @@ __in PUNICODE_STRING RegistryPath
 	return status;
 }
 
-static NTSTATUS GetBusInformation(
-	_In_ WDFDEVICE FxDevice
+static NTSTATUS GetIntegerProperty(
+	_In_ WDFDEVICE FxDevice,
+	char* propertyStr,
+	UINT32* property
 ) {
-	PGMBUSI2C_CONTEXT pDevice = GetDeviceContext(FxDevice);
+	PRK3XI2C_CONTEXT pDevice = GetDeviceContext(FxDevice);
 	WDFMEMORY outputMemory = WDF_NO_HANDLE;
 
 	NTSTATUS status = STATUS_ACPI_NOT_INITIALIZED;
-	char* propertyStr = "coolstar,bus-number";
 
 	size_t inputBufferLen = sizeof(ACPI_GET_DEVICE_SPECIFIC_DATA) + strlen(propertyStr) + 1;
-	ACPI_GET_DEVICE_SPECIFIC_DATA* inputBuffer = ExAllocatePoolWithTag(NonPagedPool, inputBufferLen, GMBUSI2C_POOL_TAG);
+	ACPI_GET_DEVICE_SPECIFIC_DATA* inputBuffer = ExAllocatePoolWithTag(NonPagedPool, inputBufferLen, RK3XI2C_POOL_TAG);
 	if (!inputBuffer) {
 		goto Exit;
 	}
@@ -129,174 +130,15 @@ static NTSTATUS GetBusInformation(
 		goto Exit;
 	}
 
-	pDevice->busNumber = outputBuffer->Argument->Data[0];
+	if (property) {
+		*property = 0;
+		RtlCopyMemory(property, outputBuffer->Argument->Data, min(sizeof(*property), outputBuffer->Argument->DataLength));
+	}
 
 Exit:
 	if (inputBuffer) {
-		ExFreePoolWithTag(inputBuffer, GMBUSI2C_POOL_TAG);
+		ExFreePoolWithTag(inputBuffer, RK3XI2C_POOL_TAG);
 	}
-	if (outputMemory != WDF_NO_HANDLE) {
-		WdfObjectDelete(outputMemory);
-	}
-	return status;
-}
-
-NTSTATUS ConnectToArbitrator(
-	_In_ WDFDEVICE FxDevice
-) {
-	PGMBUSI2C_CONTEXT pDevice = GetDeviceContext(FxDevice);
-	WDF_OBJECT_ATTRIBUTES objectAttributes;
-
-	WDF_OBJECT_ATTRIBUTES_INIT(&objectAttributes);
-	objectAttributes.ParentObject = FxDevice;
-
-	NTSTATUS status = WdfIoTargetCreate(FxDevice,
-		&objectAttributes,
-		&pDevice->busIoTarget
-	);
-	if (!NT_SUCCESS(status))
-	{
-		Rk3xI2CPrint(
-			DEBUG_LEVEL_ERROR,
-			DBG_IOCTL,
-			"Error creating IoTarget object - 0x%x\n",
-			status);
-		if (pDevice->busIoTarget)
-			WdfObjectDelete(pDevice->busIoTarget);
-		return status;
-	}
-
-	DECLARE_CONST_UNICODE_STRING(busDosDeviceName, L"\\DosDevices\\GMBUSI2C");
-
-	WDF_IO_TARGET_OPEN_PARAMS openParams;
-	WDF_IO_TARGET_OPEN_PARAMS_INIT_OPEN_BY_NAME(
-		&openParams,
-		&busDosDeviceName,
-		(GENERIC_READ | GENERIC_WRITE));
-
-	openParams.ShareAccess = FILE_SHARE_READ | FILE_SHARE_WRITE;
-	openParams.CreateDisposition = FILE_OPEN;
-	openParams.FileAttributes = FILE_ATTRIBUTE_NORMAL;
-
-	GMBUSI2C_INTERFACE_STANDARD Rk3xI2CInterface;
-	RtlZeroMemory(&Rk3xI2CInterface, sizeof(Rk3xI2CInterface));
-
-	status = WdfIoTargetOpen(pDevice->busIoTarget, &openParams);
-	if (!NT_SUCCESS(status))
-	{
-		Rk3xI2CPrint(
-			DEBUG_LEVEL_ERROR,
-			DBG_IOCTL,
-			"Error opening IoTarget object - 0x%x\n",
-			status);
-		WdfObjectDelete(pDevice->busIoTarget);
-		return status;
-	}
-
-	status = WdfIoTargetQueryForInterface(pDevice->busIoTarget,
-		&GUID_GMBUSI2C_INTERFACE_STANDARD,
-		(PINTERFACE)&Rk3xI2CInterface,
-		sizeof(Rk3xI2CInterface),
-		1,
-		NULL);
-	WdfIoTargetClose(pDevice->busIoTarget);
-	pDevice->busIoTarget = NULL;
-	if (!NT_SUCCESS(status)) {
-		Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
-			"WdfFdoQueryForInterface failed 0x%x\n", status);
-		return status;
-	}
-
-	pDevice->Rk3xI2CBusContext = Rk3xI2CInterface.InterfaceHeader.Context;
-	pDevice->Rk3xI2CLockBus = Rk3xI2CInterface.LockBus;
-	pDevice->Rk3xI2CUnlockBus = Rk3xI2CInterface.UnlockBus;
-
-	Rk3xI2CInterface.GetResources(pDevice->Rk3xI2CBusContext, &pDevice->MMIOAddress);
-
-	Rk3xI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
-		"MMIO acquired: %p\n", pDevice->MMIOAddress);
-
-	return status;
-}
-
-NTSTATUS
-GetMMIOBar(
-	_In_ WDFDEVICE FxDevice
-)
-{
-	NTSTATUS status = STATUS_ACPI_NOT_INITIALIZED;
-	ACPI_EVAL_INPUT_BUFFER_EX inputBuffer;
-	RtlZeroMemory(&inputBuffer, sizeof(inputBuffer));
-
-	inputBuffer.Signature = ACPI_EVAL_INPUT_BUFFER_SIGNATURE_EX;
-	status = RtlStringCchPrintfA(
-		inputBuffer.MethodName,
-		sizeof(inputBuffer.MethodName),
-		"MMIO"
-	);
-	if (!NT_SUCCESS(status)) {
-		return status;
-	}
-
-	WDFMEMORY outputMemory;
-	PACPI_EVAL_OUTPUT_BUFFER outputBuffer;
-	size_t outputArgumentBufferSize = 32;
-	size_t outputBufferSize = FIELD_OFFSET(ACPI_EVAL_OUTPUT_BUFFER, Argument) + outputArgumentBufferSize;
-
-	WDF_OBJECT_ATTRIBUTES attributes;
-	WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
-	attributes.ParentObject = FxDevice;
-
-	status = WdfMemoryCreate(&attributes,
-		NonPagedPoolNx,
-		0,
-		outputBufferSize,
-		&outputMemory,
-		(PVOID*)&outputBuffer);
-	if (!NT_SUCCESS(status)) {
-		return status;
-	}
-
-	RtlZeroMemory(outputBuffer, outputBufferSize);
-
-	WDF_MEMORY_DESCRIPTOR inputMemDesc;
-	WDF_MEMORY_DESCRIPTOR outputMemDesc;
-	WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&inputMemDesc, &inputBuffer, (ULONG)sizeof(inputBuffer));
-	WDF_MEMORY_DESCRIPTOR_INIT_HANDLE(&outputMemDesc, outputMemory, NULL);
-
-	status = WdfIoTargetSendInternalIoctlSynchronously(
-		WdfDeviceGetIoTarget(FxDevice),
-		NULL,
-		IOCTL_ACPI_EVAL_METHOD_EX,
-		&inputMemDesc,
-		&outputMemDesc,
-		NULL,
-		NULL
-	);
-	if (!NT_SUCCESS(status)) {
-		goto Exit;
-	}
-
-	if (outputBuffer->Signature != ACPI_EVAL_OUTPUT_BUFFER_SIGNATURE) {
-		goto Exit;
-	}
-
-	if (outputBuffer->Count < 1) {
-		goto Exit;
-	}
-
-	PGMBUSI2C_CONTEXT pDevice = GetDeviceContext(FxDevice);
-
-	UINT64 mmioBAR = *(UINT64*)outputBuffer->Argument[0].Data;
-
-	PHYSICAL_ADDRESS mmioPhys;
-	mmioPhys.QuadPart = mmioBAR;
-
-	pDevice->MMIOAddress = MmMapIoSpace(mmioPhys, GMBUSMMIO_SPACE, MmWriteCombined);
-	Rk3xI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
-		"MMIO Mapped to %p\n", pDevice->MMIOAddress);
-
-Exit:
 	if (outputMemory != WDF_NO_HANDLE) {
 		WdfObjectDelete(outputMemory);
 	}
@@ -329,34 +171,59 @@ Status
 
 --*/
 {
-	PGMBUSI2C_CONTEXT pDevice = GetDeviceContext(FxDevice);
+	PRK3XI2C_CONTEXT pDevice = GetDeviceContext(FxDevice);
 	NTSTATUS status = STATUS_INSUFFICIENT_RESOURCES;
+	ULONG resourceCount;
+	BOOLEAN mmioFound;
 
 	UNREFERENCED_PARAMETER(FxResourcesRaw);
-	UNREFERENCED_PARAMETER(FxResourcesTranslated);
 
-	if (!pDevice->IsArbitrator) {
-		status = GetBusInformation(FxDevice);
-		if (!NT_SUCCESS(status))
+	resourceCount = WdfCmResourceListGetCount(FxResourcesTranslated);
+	mmioFound = FALSE;
+
+	Rk3xI2CPrint(DEBUG_LEVEL_INFO, DBG_INIT,
+		"%s\n", __func__);
+
+	for (ULONG i = 0; i < resourceCount; i++)
+	{
+		PCM_PARTIAL_RESOURCE_DESCRIPTOR pDescriptor;
+
+		pDescriptor = WdfCmResourceListGetDescriptor(
+			FxResourcesTranslated, i);
+
+		switch (pDescriptor->Type)
 		{
-			return status;
-		}
+		case CmResourceTypeMemory:
+			if (!mmioFound) {
+				pDevice->MMIOAddress = MmMapIoSpace(pDescriptor->u.Memory.Start, pDescriptor->u.Memory.Length, MmNonCached);
+				pDevice->MMIOSize = pDescriptor->u.Memory.Length;
 
-		status = ConnectToArbitrator(FxDevice);
-		if (!NT_SUCCESS(status)) {
-			return status;
-		}
-
-		Rk3xI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
-			"Bus Number: %d\n", pDevice->busNumber);
-	}
-	else {
-		status = GetMMIOBar(FxDevice);
-		if (!NT_SUCCESS(status)) {
-			return status;
+				mmioFound = TRUE;
+			}
+			break;
 		}
 	}
 
+	if (!pDevice->MMIOAddress || !mmioFound) {
+		status = STATUS_NOT_FOUND; //MMIO is required
+		return status;
+	}
+
+	pDevice->busNumber = 0xff; //Set default to -1
+	status = GetIntegerProperty(FxDevice, "rockchip,bclk", &pDevice->baseClock);
+	if (!NT_SUCCESS(status)) {
+		return status;
+	}
+
+	Rk3xI2CPrint(DEBUG_LEVEL_INFO, DBG_INIT,
+		"Base Clock: %d\n", pDevice->baseClock);
+
+	//status = GetIntegerProperty(FxDevice, "rockchip,grf", &pDevice->busNumber); // only seems to be needed for rk3055/rk3188 
+	pDevice->calcTimings = rk3x_i2c_v1_calc_timings; //for rk3399 / rk356x / rk3588
+
+	//Set default timings
+	pDevice->timings.bus_freq_hz = I2C_MAX_STANDARD_MODE_FREQ;
+	updateClockSettings(pDevice);
 	return status;
 }
 
@@ -385,9 +252,9 @@ Status
 
 	UNREFERENCED_PARAMETER(FxResourcesTranslated);
 
-	PGMBUSI2C_CONTEXT pDevice = GetDeviceContext(FxDevice);
-	if (pDevice->IsArbitrator) {
-		MmUnmapIoSpace(pDevice->MMIOAddress, GMBUSMMIO_SPACE);
+	PRK3XI2C_CONTEXT pDevice = GetDeviceContext(FxDevice);
+	if (pDevice->MMIOAddress) {
+		MmUnmapIoSpace(pDevice->MMIOAddress, pDevice->MMIOSize);
 	}
 
 	return status;
@@ -417,6 +284,11 @@ Status
 {
 	UNREFERENCED_PARAMETER(FxPreviousState);
 	NTSTATUS status = STATUS_SUCCESS;
+	PRK3XI2C_CONTEXT pDevice = GetDeviceContext(FxDevice);
+
+	UINT32 version = (read32(pDevice, REG_CON) & (0xff << 16)) >> 16;
+	Rk3xI2CPrint(DEBUG_LEVEL_INFO, DBG_INIT,
+		"Version: %d\n", version);
 
 	return status;
 }
@@ -507,7 +379,7 @@ VOID OnSpbIoRead(
 	_In_ size_t Length
 )
 {
-	PGMBUSI2C_CONTEXT pDevice = GetDeviceContext(SpbController);
+	PRK3XI2C_CONTEXT pDevice = GetDeviceContext(SpbController);
 
 	NTSTATUS status = i2c_xfer(pDevice, SpbTarget, SpbRequest, 1);
 	SpbRequestComplete(SpbRequest, status);
@@ -520,7 +392,7 @@ VOID OnSpbIoWrite(
 	_In_ size_t Length
 )
 {
-	PGMBUSI2C_CONTEXT pDevice = GetDeviceContext(SpbController);
+	PRK3XI2C_CONTEXT pDevice = GetDeviceContext(SpbController);
 
 	NTSTATUS status = i2c_xfer(pDevice, SpbTarget, SpbRequest, 1);
 	SpbRequestComplete(SpbRequest, status);
@@ -534,128 +406,10 @@ VOID OnSpbIoSequence(
 )
 {
 
-	PGMBUSI2C_CONTEXT pDevice = GetDeviceContext(SpbController);
+	PRK3XI2C_CONTEXT pDevice = GetDeviceContext(SpbController);
 
 	NTSTATUS status = i2c_xfer(pDevice, SpbTarget, SpbRequest, TransferCount);
 	SpbRequestComplete(SpbRequest, status);
-}
-
-NTSTATUS
-GetDeviceHID(
-	_In_ WDFDEVICE FxDevice
-)
-{
-	NTSTATUS status = STATUS_ACPI_NOT_INITIALIZED;
-	ACPI_EVAL_INPUT_BUFFER_EX inputBuffer;
-	RtlZeroMemory(&inputBuffer, sizeof(inputBuffer));
-
-	inputBuffer.Signature = ACPI_EVAL_INPUT_BUFFER_SIGNATURE_EX;
-	status = RtlStringCchPrintfA(
-		inputBuffer.MethodName,
-		sizeof(inputBuffer.MethodName),
-		"_HID"
-	);
-	if (!NT_SUCCESS(status)) {
-		return status;
-	}
-
-	WDFMEMORY outputMemory;
-	PACPI_EVAL_OUTPUT_BUFFER outputBuffer;
-	size_t outputArgumentBufferSize = 32;
-	size_t outputBufferSize = FIELD_OFFSET(ACPI_EVAL_OUTPUT_BUFFER, Argument) + outputArgumentBufferSize;
-
-	WDF_OBJECT_ATTRIBUTES attributes;
-	WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
-	attributes.ParentObject = FxDevice;
-
-	status = WdfMemoryCreate(&attributes,
-		NonPagedPoolNx,
-		0,
-		outputBufferSize,
-		&outputMemory,
-		(PVOID*)&outputBuffer);
-	if (!NT_SUCCESS(status)) {
-		return status;
-	}
-
-	RtlZeroMemory(outputBuffer, outputBufferSize);
-
-	WDF_MEMORY_DESCRIPTOR inputMemDesc;
-	WDF_MEMORY_DESCRIPTOR outputMemDesc;
-	WDF_MEMORY_DESCRIPTOR_INIT_BUFFER(&inputMemDesc, &inputBuffer, (ULONG)sizeof(inputBuffer));
-	WDF_MEMORY_DESCRIPTOR_INIT_HANDLE(&outputMemDesc, outputMemory, NULL);
-
-	status = WdfIoTargetSendInternalIoctlSynchronously(
-		WdfDeviceGetIoTarget(FxDevice),
-		NULL,
-		IOCTL_ACPI_EVAL_METHOD_EX,
-		&inputMemDesc,
-		&outputMemDesc,
-		NULL,
-		NULL
-	);
-	if (!NT_SUCCESS(status)) {
-		goto Exit;
-	}
-
-	if (outputBuffer->Signature != ACPI_EVAL_OUTPUT_BUFFER_SIGNATURE) {
-		goto Exit;
-	}
-
-	if (outputBuffer->Count < 1) {
-		goto Exit;
-	}
-
-	PGMBUSI2C_CONTEXT pDevice = GetDeviceContext(FxDevice);
-	UINT32 chipId;
-
-	if (strncmp(outputBuffer->Argument[0].Data, "BOOT0001", outputBuffer->Argument[0].DataLength) == 0) {
-		pDevice->IsArbitrator = TRUE;
-	}
-	else if (strncmp(outputBuffer->Argument[0].Data, "BOOT0002", outputBuffer->Argument[0].DataLength) == 0) {
-		pDevice->IsArbitrator = FALSE;
-	}
-	else {
-		status = STATUS_ACPI_INVALID_ARGUMENT;
-	}
-
-Exit:
-	if (outputMemory != WDF_NO_HANDLE) {
-		WdfObjectDelete(outputMemory);
-	}
-	return status;
-}
-
-NTSTATUS Rk3xI2CArbGetResources(
-	PGMBUSI2C_CONTEXT pDevice,
-	PVOID* MMIOAddr
-) {
-	if (!pDevice || !pDevice->IsArbitrator) {
-		return STATUS_INVALID_PARAMETER;
-	}
-	if (!MMIOAddr) {
-		return STATUS_INVALID_PARAMETER;
-	}
-	*MMIOAddr = pDevice->MMIOAddress;
-}
-
-NTSTATUS Rk3xI2CArbLock(
-	PGMBUSI2C_CONTEXT pDevice
-) {
-	if (!pDevice || !pDevice->IsArbitrator) {
-		return STATUS_INVALID_PARAMETER;
-	}
-	return WdfWaitLockAcquire(pDevice->GMBusLock, NULL);
-}
-
-NTSTATUS Rk3xI2CArbUnlock(
-	PGMBUSI2C_CONTEXT pDevice
-) {
-	if (!pDevice || !pDevice->IsArbitrator) {
-		return STATUS_INVALID_PARAMETER;
-	}
-	WdfWaitLockRelease(pDevice->GMBusLock, NULL);
-	return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -667,7 +421,8 @@ IN PWDFDEVICE_INIT DeviceInit
 	NTSTATUS                      status = STATUS_SUCCESS;
 	WDF_OBJECT_ATTRIBUTES         attributes;
 	WDFDEVICE                     device;
-	PGMBUSI2C_CONTEXT             devContext;
+	PRK3XI2C_CONTEXT             devContext;
+	WDF_INTERRUPT_CONFIG interruptConfig;
 
 	UNREFERENCED_PARAMETER(Driver);
 
@@ -699,7 +454,7 @@ IN PWDFDEVICE_INIT DeviceInit
 	// Setup the device context
 	//
 
-	WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, GMBUSI2C_CONTEXT);
+	WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&attributes, RK3XI2C_CONTEXT);
 
 	//
 	// Create a framework device object.This call will in turn create
@@ -729,99 +484,68 @@ IN PWDFDEVICE_INIT DeviceInit
 
 	devContext->FxDevice = device;
 
-	status = GetDeviceHID(device);
+	//
+	// Create an interrupt object for hardware notifications
+	//
+	WDF_INTERRUPT_CONFIG_INIT(
+		&interruptConfig,
+		rk3x_i2c_irq,
+		NULL);
+
+	status = WdfInterruptCreate(
+		device,
+		&interruptConfig,
+		WDF_NO_OBJECT_ATTRIBUTES,
+		&devContext->Interrupt);
 
 	if (!NT_SUCCESS(status))
 	{
 		Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
-			"Failed to get HID with status code 0x%x\n", status);
+			"Error creating WDF interrupt object - %!STATUS!",
+			status);
 
 		return status;
 	}
 
-	Rk3xI2CPrint(DEBUG_LEVEL_INFO, DBG_PNP,
-		"Arbitrator? %d\n", devContext->IsArbitrator);
+	//Create spin lock
+	status = WdfWaitLockCreate(WDF_NO_OBJECT_ATTRIBUTES, &devContext->waitLock);
+	if (!NT_SUCCESS(status))
+	{
+		Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
+			"WdfWaitLockCreate failed with status code 0x%x\n", status);
 
-	if (devContext->IsArbitrator) { //Arbitrator. Setup protocol
-		DECLARE_CONST_UNICODE_STRING(dosDeviceName, L"\\DosDevices\\GMBUSI2C");
-
-		status = WdfDeviceCreateSymbolicLink(device,
-			&dosDeviceName
-		);
-		if (!NT_SUCCESS(status)) {
-			Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
-				"WdfDeviceCreateSymbolicLink failed 0x%x\n", status);
-			return status;
-		}
-
-		WDF_OBJECT_ATTRIBUTES_INIT(&attributes);
-		attributes.ParentObject = device;
-		status = WdfWaitLockCreate(&attributes, &devContext->GMBusLock);
-		if (!NT_SUCCESS(status)) {
-			Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
-				"WdfWaitLockCreate failed 0x%x\n", status);
-			return status;
-		}
-
-		WDF_QUERY_INTERFACE_CONFIG  qiConfig;
-
-		GMBUSI2C_INTERFACE_STANDARD GMBusInterface;
-		RtlZeroMemory(&GMBusInterface, sizeof(GMBusInterface));
-
-		GMBusInterface.InterfaceHeader.Size = sizeof(GMBusInterface);
-		GMBusInterface.InterfaceHeader.Version = 1;
-		GMBusInterface.InterfaceHeader.Context = (PVOID)devContext;
-
-		//
-		// Let the framework handle reference counting.
-		//
-		GMBusInterface.InterfaceHeader.InterfaceReference = WdfDeviceInterfaceReferenceNoOp;
-		GMBusInterface.InterfaceHeader.InterfaceDereference = WdfDeviceInterfaceDereferenceNoOp;
-
-		GMBusInterface.GetResources = Rk3xI2CArbGetResources;
-		GMBusInterface.LockBus = Rk3xI2CArbLock;
-		GMBusInterface.UnlockBus = Rk3xI2CArbUnlock;
-
-		WDF_QUERY_INTERFACE_CONFIG_INIT(&qiConfig,
-			(PINTERFACE)&GMBusInterface,
-			&GUID_GMBUSI2C_INTERFACE_STANDARD,
-			NULL);
-
-		status = WdfDeviceAddQueryInterface(device, &qiConfig);
-		if (!NT_SUCCESS(status)) {
-			Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
-				"WdfDeviceAddQueryInterface failed 0x%x\n", status);
-
-			return status;
-		}
-	} else { //Link. Initialize SPB Context
-		//
-		// Bind a SPB controller object to the device.
-		//
-
-		SPB_CONTROLLER_CONFIG spbConfig;
-		SPB_CONTROLLER_CONFIG_INIT(&spbConfig);
-
-		spbConfig.PowerManaged = WdfTrue;
-		spbConfig.EvtSpbTargetConnect = OnTargetConnect;
-		spbConfig.EvtSpbIoRead = OnSpbIoRead;
-		spbConfig.EvtSpbIoWrite = OnSpbIoWrite;
-		spbConfig.EvtSpbIoSequence = OnSpbIoSequence;
-
-		status = SpbDeviceInitialize(devContext->FxDevice, &spbConfig);
-		if (!NT_SUCCESS(status))
-		{
-			Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
-				"SpbDeviceInitialize failed with status code 0x%x\n", status);
-
-			return status;
-		}
-
-		WDF_OBJECT_ATTRIBUTES targetAttributes;
-		WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&targetAttributes, PBC_TARGET);
-
-		SpbControllerSetTargetAttributes(devContext->FxDevice, &targetAttributes);
+		return status;
 	}
+
+	//Create Event
+	KeInitializeEvent(&devContext->waitEvent, NotificationEvent, FALSE);
+	
+	//
+	// Bind a SPB controller object to the device.
+	//
+
+	SPB_CONTROLLER_CONFIG spbConfig;
+	SPB_CONTROLLER_CONFIG_INIT(&spbConfig);
+
+	spbConfig.PowerManaged = WdfTrue;
+	spbConfig.EvtSpbTargetConnect = OnTargetConnect;
+	spbConfig.EvtSpbIoRead = OnSpbIoRead;
+	spbConfig.EvtSpbIoWrite = OnSpbIoWrite;
+	spbConfig.EvtSpbIoSequence = OnSpbIoSequence;
+
+	status = SpbDeviceInitialize(devContext->FxDevice, &spbConfig);
+	if (!NT_SUCCESS(status))
+	{
+		Rk3xI2CPrint(DEBUG_LEVEL_ERROR, DBG_PNP,
+			"SpbDeviceInitialize failed with status code 0x%x\n", status);
+
+		return status;
+	}
+
+	WDF_OBJECT_ATTRIBUTES targetAttributes;
+	WDF_OBJECT_ATTRIBUTES_INIT_CONTEXT_TYPE(&targetAttributes, PBC_TARGET);
+
+	SpbControllerSetTargetAttributes(devContext->FxDevice, &targetAttributes);
 
 	return status;
 }
