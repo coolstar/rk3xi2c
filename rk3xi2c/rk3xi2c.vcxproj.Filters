@@ -19,7 +19,7 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <Inf Include="rk3xi2c.inf">
+    <Inf Include="rk3xi2c.inx">
       <Filter>Driver Files</Filter>
     </Inf>
   </ItemGroup>
