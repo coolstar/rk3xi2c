@@ -232,6 +232,9 @@
     <ClCompile Include="rk3xi2c.c" />
     <ClCompile Include="mdlchain.c" />
   </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="rk3xi2c.rc" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
